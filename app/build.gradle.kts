@@ -11,6 +11,8 @@ android {
         applicationId = "com.enem.smartunlock"
         minSdk = 26
         targetSdk = 34
+        versionCode = 1
+        versionName = "1.0"
     }
 
     buildFeatures {
@@ -20,6 +22,15 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.4"
     }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+}
+
+kotlin {
+    jvmToolchain(17)
 }
 
 dependencies {
@@ -30,7 +41,6 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
 
-    // Retrofit (API ENEM)
     implementation("com.squareup.retrofit2:retrofit:2.9.0")
     implementation("com.squareup.retrofit2:converter-gson:2.9.0")
 }
