@@ -1,5 +1,6 @@
 package com.enem.smartunlock
 
+import android.content.Context
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
@@ -8,20 +9,14 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 
 data class LocalQuestion(
     val subject: String,
@@ -32,8 +27,18 @@ data class LocalQuestion(
 
 class LockScreenActivity : ComponentActivity() {
 
+    private val prefs by lazy {
+        getSharedPreferences("enem_unlock", Context.MODE_PRIVATE)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        val unlockedUntil = prefs.getLong("unlocked_until", 0L)
+        if (System.currentTimeMillis() < unlockedUntil) {
+            finish()
+            return
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
@@ -47,15 +52,24 @@ class LockScreenActivity : ComponentActivity() {
         }
 
         setContent {
-            ChallengeScreen {
-                finish()
-            }
+            ChallengeScreen(
+                onUnlocked = { minutes ->
+                    val unlockedUntilTime =
+                        System.currentTimeMillis() + minutes * 60_000L
+
+                    prefs.edit()
+                        .putLong("unlocked_until", unlockedUntilTime)
+                        .apply()
+
+                    finish()
+                }
+            )
         }
     }
 }
 
 @Composable
-fun ChallengeScreen(onFinish: () -> Unit) {
+fun ChallengeScreen(onUnlocked: (Int) -> Unit) {
     val questions = remember {
         listOf(
             LocalQuestion(
@@ -95,16 +109,29 @@ fun ChallengeScreen(onFinish: () -> Unit) {
     }
 
     var index by remember { mutableStateOf(0) }
-    var score by remember { mutableStateOf(0) }
+    var streak by remember { mutableStateOf(0) }
     var minutes by remember { mutableStateOf(0) }
-    var feedback by remember { mutableStateOf("Acerte 3 seguidas para liberar.") }
+    var locked by remember { mutableStateOf(false) }
+    var shouldUnlock by remember { mutableStateOf(false) }
+    var feedback by remember { mutableStateOf("Faltam 3 acertos seguidos.") }
 
+    val required = 3
+    val remaining = required - streak
     val q = questions[index]
-    val progress = score / 3f
 
     val deepBlue = Color(0xFF0B1A2F)
     val cardBlue = Color(0xFF122B3F)
     val brightBlue = Color(0xFF3F9EF0)
+    val softBlue = Color(0xFFA0C4E2)
+    val green = Color(0xFF21B573)
+    val red = Color(0xFFD94F5C)
+
+    LaunchedEffect(shouldUnlock) {
+        if (shouldUnlock) {
+            delay(900)
+            onUnlocked(minutes)
+        }
+    }
 
     Surface(
         modifier = Modifier
@@ -128,32 +155,37 @@ fun ChallengeScreen(onFinish: () -> Unit) {
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Progresso: $score/3 · Tempo ganho: $minutes min",
-                color = Color(0xFFA0C4E2),
-                fontSize = 14.sp
+                text = if (streak >= required) {
+                    "Desbloqueando..."
+                } else {
+                    "Faltam $remaining · Tempo ganho: $minutes min"
+                },
+                color = softBlue,
+                fontSize = 15.sp
             )
 
             Spacer(modifier = Modifier.height(14.dp))
 
             LinearProgressIndicator(
-                progress = { progress },
+                progress = { streak / required.toFloat() },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(8.dp),
-                color = brightBlue
+                color = green,
+                trackColor = Color(0xFF1A2E44)
             )
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(18.dp))
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(22.dp),
                 colors = CardDefaults.cardColors(containerColor = cardBlue)
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
                     Text(
                         text = q.subject,
-                        color = Color(0xFFA0C4E2),
+                        color = softBlue,
                         fontWeight = FontWeight.Bold
                     )
 
@@ -170,30 +202,41 @@ fun ChallengeScreen(onFinish: () -> Unit) {
 
                     q.options.forEachIndexed { optionIndex, option ->
                         Button(
+                            enabled = !locked && !shouldUnlock,
                             onClick = {
-                                if (optionIndex == q.correct) {
-                                    score += 1
-                                    val gain = score * 5
-                                    minutes += gain
-                                    feedback = "Correto. +$gain minutos."
+                                locked = true
 
-                                    if (score >= 3) {
-                                        onFinish()
+                                if (optionIndex == q.correct) {
+                                    val newStreak = streak + 1
+                                    streak = newStreak
+
+                                    val gain = newStreak * 5
+                                    minutes += gain
+
+                                    if (newStreak >= required) {
+                                        feedback = "✅ 3/3 concluído. Desbloqueando..."
+                                        shouldUnlock = true
                                     } else {
+                                        feedback = "✅ Correto. Faltam ${required - newStreak}."
                                         index = (index + 1) % questions.size
+                                        locked = false
                                     }
                                 } else {
-                                    score = 0
+                                    streak = 0
                                     minutes /= 2
-                                    feedback = "Errou. Perda parcial aplicada."
+                                    feedback = "❌ Errou. Voltou para 3."
                                     index = (index + 1) % questions.size
+                                    locked = false
                                 }
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 5.dp),
                             shape = RoundedCornerShape(16.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = brightBlue)
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = brightBlue,
+                                disabledContainerColor = brightBlue.copy(alpha = 0.45f)
+                            )
                         ) {
                             Text(option, color = Color.White)
                         }
@@ -205,8 +248,9 @@ fun ChallengeScreen(onFinish: () -> Unit) {
 
             Text(
                 text = feedback,
-                color = Color(0xFFA0C4E2),
-                fontSize = 14.sp
+                color = if (feedback.startsWith("❌")) red else softBlue,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold
             )
         }
     }
